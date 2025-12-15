@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 
-# --- 1. データベース (商材・特性・周期・誤差) ---
+# --- 1. 商材データベース ---
 ITEM_DB = {
     "原始獣のシャプカ (頭)": {"targets": [0, 180, 0, 120, 180, 120], "limit": 2, "shape": (2, 3), "type": "再生", "cycle": ["ふつう", "ランダム", "弱い", "最強", "強い"]},
     "原始獣のコート上": {"targets": [95, 40, 95, 60, 60, 60, 75, 40, 75], "limit": 8, "shape": (3, 3), "type": "再生", "cycle": ["ふつう", "ランダム", "弱い", "最強", "強い"]},
@@ -15,44 +15,45 @@ ITEM_DB = {
     "叡聖の深沓 (足)": {"targets": [450, 240, 130, 410], "limit": 2, "shape": (2, 2), "type": "虹", "cycle": ["弱い", "ランダム", "最強", "ランダム", "ランダム", "ふつう", "ふつう", "強い", "ランダム"]},
 }
 
-SKILLS = {"通常ぬい": 5, "かげんぬい": 10, "2倍ぬい": 9, "3倍ぬい": 12, "ねらいぬい": 16, "水平ぬい": 10, "大滝のぼり": 10, "精神統一": 7, "しつけがけ": 13, "ぬいパワーシフト": 7}
+# --- 2. 指南ロジック ---
+def get_ai_action(diffs, turn, power, item_type, crit):
+    idx = np.argmax(diffs)
+    val = diffs[idx]
+    target = f"マス{idx+1}"
+    
+    # 削り段階の「最強」活用ロジック (マリア様コンボ想定)
+    if power == "最強":
+        if val >= 216: return f"⚔️ **【{target}】に「3倍ぬい」2回分相当の削りが必要**：最x6コンボ(216)を意識。"
+        if val >= 108: return f"⚔️ **【{target}】に「3倍ぬい」**：最x3コンボ(108)で一気に削るチャンス！"
+        if val >= 72: return f"⚔️ **【{target}】に「2倍ぬい」**：最x2コンボ(72)で調整圏内へ。"
+    
+    # 布特性による特殊判断
+    if item_type == "再生" and turn % 4 == 0 and 12 <= val <= 16:
+        return f"♻️ **【{target}】放置推奨**：この後、再生（戻り）でピッタリを狙えます。"
+    
+    if crit >= 40.0 and 15 <= val <= 35:
+        return f"🎯 **【{target}】に「ねらいぬい」**：本会心での完結を推奨。"
 
-# --- 2. 計算・推奨ロジック ---
+    # パワー別の推奨特技
+    if val >= 81 and power in ["強い", "最強"]: return f"🧵 **【{target}】に「3倍ぬい」**：強x3(81)以上の出力を活用。"
+    if val >= 45 and power in ["ふつう", "強い"]: return f"🧵 **【{target}】に「2倍ぬい」**：普+強(45)調整を視野に。"
+    if 1 <= val <= 6: return f"🤏 **【{target}】に「かげんぬい」**：誤差を詰める最終調整。"
+    
+    return f"⚖️ **【{target}】に「通常ぬい」** または様子見。次の強いパワーを待ちます。"
+
 def calculate_crit(base, turn, item_type, hissatsu):
-    rate = base * 8.0 # ねらいぬい想定
+    rate = base * 8.0 
     if item_type == "虹" and turn % 8 == 0: rate *= 7.0
     if hissatsu: rate *= 2.0
     return min(rate, 100.0)
 
-def get_ai_action(diffs, turn, power, item_type, crit):
-    # 最大の差があるマスのインデックス
-    idx = np.argmax(diffs)
-    val = diffs[idx]
-    target_label = f"マス{idx+1}"
-    
-    if item_type == "再生" and turn % 4 == 0 and 12 <= val <= 16:
-        return f"💤 **【{target_label}】放置推奨**：再生（戻り）でピッタリを狙えます。"
-    
-    if crit >= 40.0 and 15 <= val <= 35:
-        return f"🎯 **【{target_label}】に「ねらいぬい」**：会心で即完結のチャンス！"
-
-    if power == "最強":
-        if val >= 108: return f"⚔️ **【{target_label}】に「3倍ぬい」**：最x3コンボ圏内へ。"
-        return f"⚔️ **【{target_label}】に「通常/2倍」**：最強パワーを無駄なく消費。"
-    
-    if val >= 81: return f"🧵 **【{target_label}】を削る**：強x3コンボ(81)の準備。"
-    if 1 <= val <= 6: return f"🤏 **【{target_label}】に「かげんぬい」**：最終調整。"
-    if val == 0: return "✨ 全マス基準値内です。仕上げましょう。"
-    
-    return f"🧵 **【{target_label}】を中心に調整**：次のコンボパワーを待ちます。"
-
 # --- 3. UI構築 ---
-st.set_page_config(page_title="裁縫AI完全版", layout="wide")
+st.set_page_config(page_title="裁縫AI：最強削り指南版", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ 環境設定")
-    selected_name = st.selectbox("装備品", list(ITEM_DB.keys()))
-    needle_crit = st.slider("針会心率(%)", 0.0, 7.0, 4.3, 0.1)
+    selected_name = st.selectbox("商材", list(ITEM_DB.keys()))
+    needle_crit = st.slider("針会心(%)", 0.0, 7.0, 4.3, 0.1)
     data = ITEM_DB[selected_name]
 
     if 'current_item' not in st.session_state or st.session_state.current_item != selected_name:
@@ -60,17 +61,17 @@ with st.sidebar:
         st.session_state.turn, st.session_state.focus, st.session_state.hissatsu = 1, 250, False
         st.rerun()
 
-    st.session_state.hissatsu = st.checkbox("必殺チャージ中")
+    st.session_state.hissatsu = st.checkbox("必殺チャージ")
     
     st.divider()
-    st.header("🔮 未来予測・環境推移")
+    st.header("🔮 環境推移")
     for i in range(5):
         f_t = st.session_state.turn + i
         f_p = data["cycle"][(f_t-1) % len(data["cycle"])]
-        f_crit = calculate_crit(needle_crit, f_t, data["type"], st.session_state.hissatsu if i==0 else False)
-        niji = "🌈(会↑+半)" if data["type"] == "虹" and f_t % 8 == 0 else "💧(半)" if data["type"] == "虹" and f_t % 4 == 0 else ""
-        regen = "♻️(戻)" if data["type"] == "再生" and f_t % 4 == 0 else ""
-        st.write(f"T{f_t}({f_p}){niji}{regen}: 会心{f_crit:.1f}%")
+        f_c = calculate_crit(needle_crit, f_t, data["type"], st.session_state.hissatsu if i==0 else False)
+        niji = "🌈" if data["type"] == "虹" and f_t % 8 == 0 else "💧" if data["type"] == "虹" and f_t % 4 == 0 else ""
+        regen = "♻️" if data["type"] == "再生" and f_t % 4 == 0 else ""
+        st.write(f"T{f_t}({f_p}){niji}{regen}: {f_c:.1f}%")
 
 # --- 4. メイン表示 ---
 targets = np.array(data["targets"])
@@ -78,19 +79,18 @@ diffs = targets - st.session_state.board[:len(targets)]
 current_power = data["cycle"][(st.session_state.turn - 1) % len(data["cycle"])]
 current_crit = calculate_crit(needle_crit, st.session_state.turn, data["type"], st.session_state.hissatsu)
 
-st.title(f"🧵 {selected_name} ({data['type']}布)")
+st.title(f"🧵 {selected_name}")
 
-# AI推奨行動表示 (マス指定あり)
+# 推奨行動 (特技名指定)
 st.success(f"🤖 **AI推奨行動:** {get_ai_action(diffs, st.session_state.turn, current_power, data['type'], current_crit)}")
 
 col_stat, col_grid = st.columns([1, 2])
 with col_stat:
     total_err = np.sum(np.abs(diffs[targets > 0]))
     color = "green" if total_err <= data["limit"] else "red"
-    st.metric("合計誤差", int(total_err), f"★3ボーダー: {data['limit']}以内", delta_color="inverse")
-    st.session_state.focus = st.number_input("残り集中力", value=st.session_state.focus)
+    st.metric("合計誤差", int(total_err), f"ボーダー: {data['limit']}")
+    st.session_state.focus = st.number_input("集中力", value=st.session_state.focus)
     
-    st.divider()
     if st.button("⚡ 行動確定 (T+1)", use_container_width=True):
         st.session_state.turn += 1
         st.rerun()
@@ -100,11 +100,10 @@ with col_grid:
     cols = st.columns(data["shape"][1])
     for i, t in enumerate(targets):
         with cols[i % data["shape"][1]]:
-            if t == 0: st.markdown("<div style='height:100px; background-color:#111; margin-bottom:10px;'></div>", unsafe_allow_html=True)
+            if t == 0: st.markdown("<div style='height:100px; background-color:#111;'></div>", unsafe_allow_html=True)
             else:
                 d = diffs[i]
                 bg = "#28a745" if d == 0 else "#dc3545" if abs(d) >= 5 else "#ffc107"
                 with st.container(border=True):
                     st.markdown(f"<div style='background-color:{bg}; text-align:center; color:black; font-weight:bold;'>マス{i+1} 差 {int(d)}</div>", unsafe_allow_html=True)
-                    st.session_state.board[i] = st.number_input(f"入力{i}", value=int(st.session_state.board[i]), key=f"c_{i}", label_visibility="collapsed")
-                    st.caption(f"目標:{int(t)}")
+                    st.session_state.board[i] = st.number_input(f"V{i}", value=int(st.session_state.board[i]), key=f"c_{i}", label_visibility="collapsed")
