@@ -2,116 +2,145 @@ import streamlit as st
 import numpy as np
 
 # --- 1. 初期化 (Session State) ---
-if 'pattern' not in st.session_state:
-    st.session_state.pattern = ["最強", "普通", "弱い", "普通", "強い", "普通"]
-if 'pattern_idx' not in st.session_state:
-    st.session_state.pattern_idx = 0
-if 'board' not in st.session_state:
-    st.session_state.board = np.zeros((3, 3), dtype=int)
 if 'targets' not in st.session_state:
     st.session_state.targets = np.full((3, 3), 100)
+if 'board' not in st.session_state:
+    st.session_state.board = np.zeros((3, 3), dtype=int)
+if 'pattern' not in st.session_state:
+    st.session_state.pattern = ["普通", "強い", "最強", "弱い"]
+if 'pattern_idx' not in st.session_state:
+    st.session_state.pattern_idx = 0
 if 'focus' not in st.session_state:
     st.session_state.focus = 150
 if 'fixed_turns' not in st.session_state:
     st.session_state.fixed_turns = 0
-if 'random_mode' not in st.session_state:
-    st.session_state.random_mode = False
 
-# --- 2. データ定義 ---
+# --- 2. 商材・布特性データ定義 ---
+# 一般的な数値をセットしていますが、その場で書き換え可能です
+ITEM_PRESETS = {
+    "【再生布】(原始獣・精霊等)": {
+        "targets": [[140, 180, 140], [140, 180, 140], [140, 180, 140]],
+        "pattern": ["普通", "強い", "最強", "弱い"],
+        "focus": 160,
+        "note": "4ターンごとに最も縫い進んだ箇所が再生します。"
+    },
+    "【虹布】(不思議・神託等)": {
+        "targets": [[150, 150, 150], [150, 150, 150], [150, 150, 150]],
+        "pattern": ["普通", "強い", "最強", "弱い"],
+        "focus": 180,
+        "note": "消費集中力が半分or1.5倍、かつ会心率がアップするターンがあります。"
+    },
+    "【光布】(賢者・道士等)": {
+        "targets": [[130, 130, 130], [130, 130, 130], [130, 130, 130]],
+        "pattern": ["普通", "強い", "最強", "弱い"],
+        "focus": 160,
+        "note": "数ターンごとにどこかのマスの会心率が大幅にアップします。"
+    }
+}
+
 SKILL_DB = {
     "通常縫い": 5, "加減縫い": 10, "糸ほぐし": 16, "2倍縫い": 9, 
-    "3倍縫い": 12, "水平縫い": 10, "垂直縫い": 10, "精神統一": 7,
+    "3倍縫い": 12, "水平縫い": 10, "垂直縫い": 10, "たすき縫い": 7, "精神統一": 7,
 }
-ENV_LIST = ["普通", "弱い", "強い", "最強", "ランダム"]
-PRESETS = {
-    "虹のオーブ等": ["最強", "普通", "弱い", "普通", "強い", "普通"],
-    "光の糸等": ["普通", "強い", "最強", "激強"], # 必要に応じて追加
-    "ランダム入り": ["最強", "ランダム", "弱い", "普通"]
-}
+ENV_LIST = ["普通", "弱い", "強い", "最強", "激強", "ランダム"]
 
-# --- 3. サイドバー：操作性向上 ---
+# --- 3. サイドバー：布特性の選択 ---
 with st.sidebar:
-    st.header("⚙ 環境・パターン設定")
+    st.header("🧵 布の特性を選択")
+    cloth_type = st.selectbox("作成する布の種類", list(ITEM_PRESETS.keys()))
     
-    # プリセット選択
-    st.subheader("パターン選択")
-    preset_name = st.selectbox("プリセットから選ぶ", list(PRESETS.keys()))
-    if st.button("このパターンを適用"):
-        st.session_state.pattern = PRESETS[preset_name]
+    if st.button("特性データを反映"):
+        preset = ITEM_PRESETS[cloth_type]
+        st.session_state.targets = np.array(preset["targets"])
+        st.session_state.board = np.zeros((3, 3), dtype=int)
+        st.session_state.pattern = preset["pattern"]
+        st.session_state.focus = preset["focus"]
         st.session_state.pattern_idx = 0
         st.session_state.fixed_turns = 0
-        st.rerun()
-
-    # 直接編集
-    pattern_text = st.text_input("推移順序（自由編集）", value=",".join(st.session_state.pattern))
-    if st.button("手動更新"):
-        st.session_state.pattern = [p.strip() for p in pattern_text.split(",") if p.strip() in ENV_LIST]
-        st.rerun()
+        st.success(f"{cloth_type} 設定完了")
+    
+    st.info(ITEM_PRESETS[cloth_type]["note"])
 
     st.divider()
-    st.write(f"精神統一残り: **{st.session_state.fixed_turns}** ターン")
-    if st.button("⚠ 全リセット"):
-        st.session_state.clear()
-        st.rerun()
+    st.header("⚙ 環境ループ編集")
+    pattern_text = st.text_input("ループ順序", value=",".join(st.session_state.pattern))
+    if st.button("パターン更新"):
+        st.session_state.pattern = [p.strip() for p in pattern_text.split(",") if p.strip() in ENV_LIST]
+    
+    st.subheader("ターン微調整")
+    c1, c2 = st.columns(2)
+    if c1.button("⬅ 戻す"): st.session_state.pattern_idx -= 1; st.rerun()
+    if c2.button("進める ➡"): st.session_state.pattern_idx += 1; st.rerun()
 
-# --- 4. メイン画面：環境表示 ---
-st.title("🧵 裁縫アシスト Ver.2")
+# --- 4. メイン画面 ---
+st.title("裁縫アシスト [光・虹・再生布 特化]")
 
 col1, col2 = st.columns([2, 1])
 
 with col2:
-    st.header("📊 状態")
-    st.session_state.focus = st.number_input("集中力", value=st.session_state.focus)
+    st.header("📊 状況")
+    st.session_state.focus = st.number_input("残り集中力", value=st.session_state.focus)
     
-    # 現在の環境決定
+    # 現在の環境
     idx = st.session_state.pattern_idx % len(st.session_state.pattern)
-    base_env = st.session_state.pattern[idx]
+    current_env = st.session_state.pattern[idx]
     
-    if base_env == "ランダム":
-        st.warning("🎲 ランダム環境です！")
-        current_env = st.radio("実際に発生した環境は？", ["普通", "弱い", "強い", "最強"], horizontal=True)
+    if current_env == "ランダム":
+        st.warning("🎲 ランダム環境")
+        current_env = st.radio("発生環境を選択", ["普通", "弱い", "強い", "最強"], horizontal=True)
     else:
-        current_env = base_env
-        st.metric("現在の環境", current_env)
+        st.metric("現在のぬいパワー", current_env)
 
-    next_idx = (st.session_state.pattern_idx + 1) % len(st.session_state.pattern)
-    st.info(f"次回の予定: **{st.session_state.pattern[next_idx]}**")
+    # 精神統一の自動管理
+    if st.session_state.fixed_turns > 0:
+        st.warning(f"精神統一中 (残り {st.session_state.fixed_turns} 回)")
+    
+    next_env = st.session_state.pattern[(st.session_state.pattern_idx + 1) % len(st.session_state.pattern)]
+    st.info(f"次回の予定: {next_env}")
 
 with col1:
-    st.header("📍 盤面入力")
+    st.header("📍 盤面 (目標まであといくつ？)")
     grid_cols = st.columns(3)
     for r in range(3):
         for c in range(3):
             with grid_cols[c]:
-                diff = st.session_state.targets[r,c] - st.session_state.board[r,c]
-                st.markdown(f"**({r},{c})** 差: `{diff}`")
+                target = st.session_state.targets[r,c]
+                current = st.session_state.board[r,c]
+                diff = target - current
+                
+                # 誤差表示
+                if diff == 0: color = "green"; label = "OK"
+                elif 0 < diff <= 4: color = "orange"; label = "圏内"
+                elif diff < 0: color = "red"; label = "Over"
+                else: color = "white"; label = ""
+
+                st.markdown(f"**({r},{c})** 差: :{color}[**{diff}**] {label}")
                 st.session_state.board[r,c] = st.number_input(
-                    f"b{r}{c}", value=int(st.session_state.board[r,c]), 
-                    key=f"b_{r}_{c}", label_visibility="collapsed"
+                    f"b{r}{c}", value=int(current), key=f"b_{r}_{c}", label_visibility="collapsed"
+                )
+                # 目標値もその場で微調整可能に
+                st.session_state.targets[r,c] = st.number_input(
+                    f"t{r}{c}", value=int(target), key=f"t_{r}_{c}", label_visibility="collapsed"
                 )
 
-# --- 5. 実行ボタン ---
+# --- 5. 操作実行 ---
 st.divider()
-c1, c2 = st.columns(2)
+e1, e2 = st.columns(2)
 
-with c1:
-    selected_skill = st.selectbox("特技実行", list(SKILL_DB.keys()))
-    if st.button("⚡ 実行して次へ"):
-        # 集中力減算
+with e1:
+    selected_skill = st.selectbox("実行特技", list(SKILL_DB.keys()))
+    if st.button("⚡ 特技実行 (ターン進行)"):
         st.session_state.focus -= SKILL_DB[selected_skill]
-        
-        # 精神統一の処理
         if selected_skill == "精神統一":
-            st.session_state.fixed_turns = 3 # 実行ターン含め3回固定
+            st.session_state.fixed_turns = 3
         
-        # ターン進行
         if st.session_state.fixed_turns > 0:
             st.session_state.fixed_turns -= 1
         else:
             st.session_state.pattern_idx += 1
         st.rerun()
 
-with c2:
-    st.write("入力ミスを直したい時はこちら")
-    if st.button("🔄 数値だけ反映（ターン進めない）"):
-        st.success("数値を更新しました")
+with e2:
+    st.write("集中力やターンを変えずに更新")
+    if st.button("🔄 数値確定 / AI再計算"):
+        st.rerun()
