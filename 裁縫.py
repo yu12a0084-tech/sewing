@@ -1,131 +1,124 @@
 import streamlit as st
 import numpy as np
 
-# --- 1. 定数・環境定義 ---
-# 独自周期：弱い→ランダム→最強→ランダム→ランダム→ふつう→ふつう→強い→ランダム
-POWER_CYCLE = ["弱い", "ランダム", "最強", "ランダム", "ランダム", "ふつう", "ふつう", "強い", "ランダム"]
-RANDOM_OPTIONS = ["弱い", "ふつう", "強い", "最強", "会心2倍"]
-
+# --- 1. 拡張商材データベース ---
+# 頂いた「原始獣」「叡聖」の基準値・配置・特性を完全網羅
 ITEM_DB = {
     "叡聖のサークレット (頭)": {"targets": [0, 0, 450, 140, 300, 400], "limit": 2, "rows": 3, "cols": 2, "type": "虹"},
     "叡聖の博士服 (上)": {"targets": [240, 150, 170, 130, 110, 90, 80, 130, 110], "limit": 8, "rows": 3, "cols": 3, "type": "虹"},
     "叡聖のグローブ (腕)": {"targets": [180, 130, 350, 230, 100, 120], "limit": 3, "rows": 3, "cols": 2, "type": "虹"},
     "叡聖の深沓 (足)": {"targets": [450, 240, 130, 410], "limit": 2, "rows": 2, "cols": 2, "type": "虹"},
+    "原始獣のコート下": {"targets": [70, 70, 90, 90, 140, 140], "limit": 4, "rows": 3, "cols": 2, "type": "再生"},
+    "原始獣の腕帯": {"targets": [70, 70, 90, 90, 140, 140], "limit": 3, "rows": 3, "cols": 2, "type": "再生"},
+    "原始獣のブーツ": {"targets": [140, 140, 70, 70], "limit": 2, "rows": 2, "cols": 2, "type": "再生"}
 }
 
-# --- 2. 計算コア：期待値・CP・手数ロジック ---
-def analyze_board(diffs, focus, turn, limit):
-    """
-    盤面状況から優先度をスコアリングする
-    """
+# 周期定義
+POWER_CYCLE = ["弱い", "ランダム", "最強", "ランダム", "ランダム", "ふつう", "ふつう", "強い", "ランダム"]
+
+# --- 2. 優先順位・逆算ロジック ---
+def analyze_priority(diffs, focus, turn, limit):
     scores = []
     abs_diffs = np.abs(diffs)
-    total_err = np.sum(abs_diffs)
     
     for i, d in enumerate(diffs):
-        if d == 0: continue # すでに0のマスは除外
-        
-        # 基礎優先度
-        priority = 0
+        if d == 0: continue
+        p = 0
         reasons = []
 
-        # A. ペナルティ回避ロジック (誤差5以上)
+        # A. ペナルティ回避 (誤差5以上)
         if abs(d) >= 5:
-            priority += 200  # 最優先
-            reasons.append("ペナルティ(誤差5以上)回避")
+            p += 200
+            reasons.append("誤差5以上ペナルティ回避")
         
-        # B. 手数 vs CP 効率ロジック
+        # B. 手数 vs CP 効率 (マリア・ロジック)
         if focus < 20:
-            # 集中力不足時：少ないコストで多マスを「5未満」に押し込めるか（手数重視）
-            if abs(d) < 15:
-                priority += 50
-                reasons.append("手数重視：低コスト調整")
+            if abs(d) < 15: # 低コストで刻める
+                p += 50
+                reasons.append("手数重視(分散調整)")
         else:
-            # 集中力潤沢時：大きい数値を効率よく削る（CP重視）
-            if abs(d) > 30:
-                priority += 100
-                reasons.append("CP重視：高効率削り")
+            if abs(d) > 30: # 集中力があるなら大きく削る
+                p += 100
+                reasons.append("CP効率重視(一撃)")
 
-        # C. 会心期待値 (虹ターン連動)
-        if turn % 8 == 0: # 虹会心アップ
-            if abs(d) > 50:
-                priority += 150
-                reasons.append("虹会心：吸い込み狙い")
+        # C. 虹布特性の同期 (4nターン)
+        if turn % 8 == 0: # 会心UP
+            if abs(d) > 50: p += 150; reasons.append("虹会心吸い込み狙い")
 
-        if priority > 0:
-            scores.append({"idx": i, "score": priority, "reason": ", ".join(reasons)})
+        if p > 0:
+            scores.append({"idx": i, "score": p, "reason": " / ".join(reasons)})
             
     return sorted(scores, key=lambda x: x['score'], reverse=True)
 
-# --- 3. UI実装 ---
-st.set_page_config(page_title="裁縫AI：逆算エンジン", layout="wide")
+# --- 3. メインUI ---
+st.set_page_config(page_title="裁縫超越AI：マルチ商材対応", layout="wide")
 
-# 初期状態
-if 'turn' not in st.session_state:
-    st.session_state.update({
-        'item_name': "叡聖のサークレット (頭)",
-        'turn': 1,
-        'focus': 250,
-        'board': np.zeros(9)
-    })
-
-data = ITEM_DB[st.session_state.item_name]
-targets = np.array(data["targets"])
-
-st.title("🌌 裁縫AI：環境推移・逆算システム")
-
-col_info, col_main = st.columns([1, 2])
-
-with col_info:
-    st.header("📈 未来予測ボード")
-    # 周期と虹パターンの可視化
-    for i in range(8):
-        f_turn = st.session_state.turn + i
-        f_power = POWER_CYCLE[(f_turn - 1) % 9]
-        is_niji_half = f_turn % 8 == 4
-        is_niji_crit = f_turn % 8 == 0
-        
-        status = ""
-        if is_niji_half: status = "🌈(集中半減)"
-        if is_niji_crit: status = "🌈(会心UP)"
-        
-        color = "green" if i == 0 else "white"
-        st.markdown(f":{color}[T{f_turn}: {f_power} {status}]")
+# 商材選択（サイドバー）
+with st.sidebar:
+    st.header("📦 商材検索・選択")
+    # 検索機能付きセレクトボックス
+    selected_name = st.selectbox("作成する装備を選択", list(ITEM_DB.keys()))
+    
+    # 選択が変更されたらリセット
+    if 'current_item' not in st.session_state or st.session_state.current_item != selected_name:
+        st.session_state.current_item = selected_name
+        st.session_state.board = np.zeros(len(ITEM_DB[selected_name]["targets"]))
+        st.session_state.turn = 1
+        st.session_state.focus = 250
+        st.rerun()
 
     st.divider()
+    st.header("📈 環境予測")
+    for i in range(5):
+        t = st.session_state.turn + i
+        p = POWER_CYCLE[(t-1)%9]
+        is_niji = ITEM_DB[selected_name]["type"] == "虹"
+        status = "🌈(会心)" if is_niji and t%8==0 else "🌈(半分)" if is_niji and t%8==4 else ""
+        color = "green" if i==0 else "white"
+        st.markdown(f":{color}[T{t}: {p} {status}]")
+
+# メインパネル
+data = ITEM_DB[st.session_state.current_item]
+targets = np.array(data["targets"])
+st.title(f"🧵 {st.session_state.current_item}")
+
+col_status, col_grid = st.columns([1, 2])
+
+with col_status:
+    # 誤差計算
+    diffs = targets - st.session_state.board[:len(targets)]
+    abs_errs = np.abs(diffs[targets > 0])
+    total_err = np.sum(abs_errs)
+    
+    # ★3判定
+    border = data["limit"]
+    color = "green" if total_err <= border else "red"
+    st.header(f"合計誤差: :{color}[{int(total_err)}]")
+    st.write(f"★3許容ボーダー: {border} 以内")
+    
     st.session_state.focus = st.number_input("残り集中力", value=st.session_state.focus)
 
-with col_main:
-    diffs = targets - st.session_state.board[:len(targets)]
-    abs_diffs = np.abs(diffs)
-    total_error = np.sum(abs_diffs[targets > 0])
-    
-    # 状態判定
-    border = data["limit"]
-    is_safe = total_error <= border
-    color = "green" if is_safe else "red"
-    st.subheader(f"合計絶対値誤差: :{color}[{int(total_error)}] / ★3境界: {border}")
+    # AIナビゲーション
+    advices = analyze_priority(diffs, st.session_state.focus, st.session_state.turn, border)
+    if advices:
+        top = advices[0]
+        st.info(f"🤖 **AI推奨アクション**\n\n**マス {top['idx']+1}** を狙ってください。\n\n理由: {top['reason']}")
 
-    # AI推論の表示
-    suggestions = analyze_board(diffs, st.session_state.focus, st.session_state.turn, border)
-    if suggestions:
-        top = suggestions[0]
-        st.warning(f"🤖 **推奨アクション: マス{top['idx'] + 1}**\n\n理由: {top['reason']}")
-
-    # 入力グリッド
+with col_grid:
     rows, cols_count = data["rows"], data["cols"]
     grid = st.columns(cols_count)
     for i, t in enumerate(targets):
         with grid[i % cols_count]:
             if t == 0:
-                st.markdown("<div style='height:140px; background-color:#111; border-radius:5px;'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='height:140px; background-color:#111; border-radius:10px;'></div>", unsafe_allow_html=True)
             else:
                 d = diffs[i]
-                bg_color = "#28a745" if d == 0 else "#dc3545" if abs(d) >= 5 else "#ffc107"
+                # 視覚的な警告（ペナルティ圏内は赤）
+                bg = "#28a745" if d == 0 else "#dc3545" if abs(d) >= 5 else "#ffc107"
                 with st.container(border=True):
-                    st.markdown(f"<div style='background-color:{bg_color}; text-align:center; border-radius:3px; font-weight:bold;'>誤差: {int(d)}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='background-color:{bg}; text-align:center; font-weight:bold; color:black;'>差分: {int(d)}</div>", unsafe_allow_html=True)
                     st.session_state.board[i] = st.number_input(f"現在値", value=int(st.session_state.board[i]), key=f"cell_{i}", label_visibility="collapsed")
-                    st.caption(f"基準:{int(t)}")
+                    st.caption(f"基準: {int(t)}")
 
 st.divider()
 if st.button("⚡ 次のターンへ進む"):
