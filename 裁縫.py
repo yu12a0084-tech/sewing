@@ -1,8 +1,7 @@
 import streamlit as st
 import numpy as np
 
-# --- 1. スキル習得レベルの定義 ---
-# ゲーム内の習得レベルに基づいたリスト
+# --- 1. データ定義 (レベル・スキル) ---
 ALL_SKILLS = {
     "通常縫い": {"cost": 5, "lv": 1},
     "加減縫い": {"cost": 10, "lv": 3},
@@ -18,78 +17,113 @@ ALL_SKILLS = {
     "しつけがけ": {"cost": 24, "lv": 47},
 }
 
-# --- 2. 初期化 ---
-if 'level' not in st.session_state:
-    st.session_state.level = 70
-if 'board_type' not in st.session_state:
-    st.session_state.board_type = "9マス (3x3)"
+# ぬいパワーの定義
+POWERS = ["弱い", "普通", "強い", "最強", "激強"]
 
-# (その他の初期化は前回同様)
-if 'targets' not in st.session_state: st.session_state.targets = np.full((3, 3), 100)
-if 'board' not in st.session_state: st.session_state.board = np.zeros((3, 3), dtype=int)
+# --- 2. 初期化 ---
+if 'level' not in st.session_state: st.session_state.level = 70
 if 'pattern' not in st.session_state: st.session_state.pattern = ["普通", "強い", "最強", "弱い"]
 if 'pattern_idx' not in st.session_state: st.session_state.pattern_idx = 0
+if 'board' not in st.session_state: st.session_state.board = np.zeros((3, 3))
+if 'targets' not in st.session_state: st.session_state.targets = np.full((3, 3), 100)
 if 'fixed_turns' not in st.session_state: st.session_state.fixed_turns = 0
+if 'is_shifted' not in st.session_state: st.session_state.is_shifted = False
 
-# --- 3. サイドバー：レベル設定とスキル制限 ---
+# --- 3. サイドバー：レベルと商材 ---
 st.set_page_config(page_title="DQX裁縫アシストPro+", layout="wide")
 
 with st.sidebar:
     st.header("👤 職人データ")
-    st.session_state.level = st.number_input("職人レベルを入力", 1, 80, st.session_state.level)
+    st.session_state.level = st.number_input("職人レベル", 1, 80, st.session_state.level)
+    available_skills = {name: d['cost'] for name, d in ALL_SKILLS.items() if d['lv'] <= st.session_state.level}
     
-    # 現在のレベルで使えるスキルを抽出
-    available_skills = {name: data['cost'] for name, data in ALL_SKILLS.items() if data['lv'] <= st.session_state.level}
-    
-    st.success(f"習得済みスキル: {len(available_skills)}種類")
-    with st.expander("習得済みリスト"):
-        for s in available_skills.keys():
-            st.write(f"・{s}")
-
     st.divider()
-    st.header("📦 商材設定")
-    new_board_type = st.selectbox("マスの数", ["4マス (2x2)", "6マス (2x3)", "9マス (3x3)"], index=2)
-    cloth_type = st.selectbox("布特性", ["【再生布】", "【虹布】", "【光布】"])
-    
-    if st.button("設定を適用してリセット"):
-        st.session_state.board_type = new_board_type
-        # ...リセット処理(前回同様)...
+    st.header("⚙️ ぬいパワー周期設定")
+    pattern_input = st.text_input("基本周期 (カンマ区切り)", value=",".join(st.session_state.pattern))
+    if st.button("周期を保存"):
+        st.session_state.pattern = [p.strip() for p in pattern_input.split(",") if p.strip()]
+        st.session_state.pattern_idx = 0
         st.rerun()
 
-# --- 4. メイン表示 ---
-st.title(f"🧵 裁縫アシスト (Lv.{st.session_state.level}対応)")
+# --- 4. メイン画面：パワーシフト管理 ---
+st.title("🧵 裁縫アシスト [パワーシフト対応]")
 
-# レベルに応じたスキル解放アドバイス
-next_skills = {name: data['lv'] for name, data in ALL_SKILLS.items() if data['lv'] > st.session_state.level}
-if next_skills:
-    next_s_name = min(next_skills, key=next_skills.get)
-    st.info(f"💡 次は **Lv.{next_skills[next_s_name]}** で「{next_s_name}」を習得します。")
+col_info1, col_info2 = st.columns([2, 1])
 
-# 再生布注記（前回同様）
-if cloth_type == "【再生布】":
-    st.warning("⚠️ **再生布の操作**: 再生が発生したら手動で数値を修正し「🔄 数値修正」を押してください。")
+with col_info2:
+    st.header("📊 現在の状態")
+    
+    # 周期上の予定パワー
+    idx = st.session_state.pattern_idx % len(st.session_state.pattern)
+    planned_power = st.session_state.pattern[idx]
+    
+    # 【重要】パワーシフト反映エリア
+    st.subheader("⚡ ぬいパワー操作")
+    current_power = st.selectbox(
+        "現在の実ぬいパワー (ズレたら修正)", 
+        POWERS, 
+        index=POWERS.index(planned_power) if planned_power in POWERS else 1
+    )
+    
+    # シフトが発生しているかの警告
+    if current_power != planned_power:
+        st.error(f"⚠️ パワーシフト発生中！\n(予定: {planned_power} → 実測: {current_power})")
+        if st.button("このパワーを周期に強制上書き"):
+            st.session_state.pattern[idx] = current_power
+            st.success("周期を更新しました")
+    else:
+        st.success(f"ぬいパワー: {current_power} (周期通り)")
 
-# 盤面表示 (前回同様のデザイン)
-# ...省略(マス数に応じた動的生成)...
+    st.session_state.focus = st.number_input("集中力", value=st.session_state.get('focus', 150))
+    if st.session_state.fixed_turns > 0:
+        st.warning(f"精神統一中 (残り {st.session_state.fixed_turns} 回)")
 
-# --- 5. 操作実行 ---
+with col_info1:
+    # 盤面表示 (4/6/9マスはこれまでのロジックを継承)
+    st.subheader("📍 盤面 (上:現在値 / 下:基準値)")
+    rows, cols = 3, 3 # 例として9マス
+    grid = st.columns(cols)
+    for r in range(rows):
+        for c in range(cols):
+            with grid[c]:
+                diff = st.session_state.targets[r,c] - st.session_state.board[r,c]
+                color = "green" if diff == 0 else "red" if diff < 0 else "orange" if diff <= 6 else "white"
+                with st.container(border=True):
+                    st.markdown(f"**残り: :{color}[{int(diff)}]**")
+                    st.session_state.board[r,c] = st.number_input(f"現{r}{c}", value=int(st.session_state.board[r,c]), key=f"b_{r}_{c}", label_visibility="collapsed")
+                    st.session_state.targets[r,c] = st.number_input(f"基{r}{c}", value=int(st.session_state.targets[r,c]), key=f"t_{r}_{c}", label_visibility="collapsed")
+
+# --- 5. 実行とターン進行 ---
 st.divider()
-col_stat, col_act = st.columns([1, 1])
+selected_skill = st.selectbox("使用特技", list(available_skills.keys()))
 
-with col_act:
-    st.header("⚡ 特技実行")
-    # ★ここがポイント：習得済みスキルのみをセレクトボックスに表示
-    selected_skill = st.selectbox("使用する特技", list(available_skills.keys()))
-    
-    current_cost = available_skills[selected_skill]
-    st.caption(f"消費集中力: {current_cost}")
+c1, c2, c3 = st.columns([1, 1, 1])
 
-    if st.button("実行して次へ"):
-        st.session_state.focus -= current_cost
-        # ...ターン進行処理(前回同様)...
+with c1:
+    if st.button("⚡ 特技実行 (ターン進行)"):
+        # 集中力消費
+        st.session_state.focus -= available_skills[selected_skill]
+        
+        # 精神統一
+        if selected_skill == "精神統一":
+            st.session_state.fixed_turns = 3
+        
+        # ターン進行
+        if st.session_state.fixed_turns > 0:
+            st.session_state.fixed_turns -= 1
+        else:
+            st.session_state.pattern_idx += 1
         st.rerun()
 
-with col_stat:
-    st.header("📊 状態")
-    st.session_state.focus = st.number_input("残り集中力", value=st.session_state.focus)
-    # ...環境表示(前回同様)...
+with c2:
+    if st.button("🔄 数値修正 (ターン維持)"):
+        st.rerun()
+
+with c3:
+    if st.button("⏭️ 1ターン飛ばす (環境のみ進める)"):
+        st.session_state.pattern_idx += 1
+        st.rerun()
+
+# 再生布の注記
+if "再生" in st.sidebar.selectbox("布特性", ["【なし】", "【再生布】", "【虹布】", "【光布】"], key="cloth_type"):
+    st.info("**再生布:** 4ターン毎に「最も縫い進んだ箇所」を手動修正してください。")
