@@ -1,139 +1,108 @@
 import streamlit as st
 import numpy as np
-import pandas as pd
 
-# --- 1. [修正] 全スキルの定義 (関数の前に配置) ---
-# DQX公式の習得レベルに基づいています
+# --- 1. 内部データ定義 ---
+# 習得レベル、消費集中力、倍率の相関
 ALL_SKILLS = {
-    "通常縫い": {"cost": 5, "lv": 1},
-    "加減縫い": {"cost": 10, "lv": 3},
-    "水平縫い": {"cost": 10, "lv": 7},
-    "たすき縫い": {"cost": 7, "lv": 11},
-    "垂直縫い": {"cost": 10, "lv": 15},
-    "2倍縫い": {"cost": 9, "lv": 19},
-    "3倍縫い": {"cost": 12, "lv": 23},
-    "精神統一": {"cost": 7, "lv": 27},
-    "糸ほぐし": {"cost": 16, "lv": 31},
-    "逆たすき縫い": {"cost": 7, "lv": 35},
-    "巻き込み縫い": {"cost": 18, "lv": 41},
-    "しつけがけ": {"cost": 24, "lv": 47},
+    "通常縫い": {"cost": 5, "lv": 1}, "加減縫い": {"cost": 10, "lv": 3},
+    "水平縫い": {"cost": 10, "lv": 7}, "たすき縫い": {"cost": 7, "lv": 11},
+    "垂直縫い": {"cost": 10, "lv": 15}, "2倍縫い": {"cost": 9, "lv": 19},
+    "3倍縫い": {"cost": 12, "lv": 23}, "精神統一": {"cost": 7, "lv": 27},
+    "糸ほぐし": {"cost": 16, "lv": 31}, "逆たすき縫い": {"cost": 7, "lv": 35},
+    "巻き込み縫い": {"cost": 18, "lv": 41}, "しつけがけ": {"cost": 24, "lv": 47},
 }
 
-# ぬいパワー倍率
 POWER_RATES = {"弱い": 0.5, "普通": 1.0, "強い": 1.5, "最強": 2.0}
 
-# 縫い数値の出現分布 (中央値が出やすく、端が出にくい山なり分布をシミュレート)
-# 12~18の場合、15(基準)が最も確率が高い
-BASE_DIST = {
-    "通常": {12:1, 13:2, 14:3, 15:4, 16:3, 17:2, 18:1},
-    "加減": {6:1, 7:2, 8:2, 9:1},
-}
+# --- 2. 裁縫の極意（ひっさつ）判断ロジック ---
+def analyze_hissatsu_utility(current_p, focus, diffs, is_charged, is_active):
+    """
+    ひっさつの戦略的価値を計算
+    """
+    max_d = np.max(diffs)
+    
+    if is_active:
+        return "会心2倍モード継続中", "誤差の大きい箇所を優先しつつ、最強ターンの削り効率を最大化してください。"
 
-# --- 2. 内部ロジック関数 ---
-
-def calculate_distribution(skill_name, power, is_shitsuke):
-    """特技と環境に応じた全出現数値とその重みを計算"""
-    if "加減" in skill_name:
-        base = BASE_DIST["加減"]
-    else:
-        base = BASE_DIST["通常"]
-    
-    # 3倍縫いなどは基本値をスライドさせて計算
-    mult_skill = 2.0 if "2倍" in skill_name else 3.0 if "3倍" in skill_name else 1.0
-    rate = POWER_RATES[power]
-    shitsuke_mult = 2.0 if is_shitsuke else 1.0
-    
-    dist = {}
-    for v, weight in base.items():
-        # DQX計算式: int(int(基本値 * スキル倍率) * パワー倍率) * しつけ倍率
-        # しつけがけは最終値を2倍にするため、奇数は出現しなくなる
-        res = int(int(int(v * mult_skill) * rate) * shitsuke_mult)
-        dist[res] = dist.get(res, 0) + weight
-    return dist
-
-def get_best_move(target_diff, power, is_shitsuke, current_level):
-    """AIが現在の残り数値に対して最も『会心(0)』になる確率が高い手を提案"""
-    available_list = [name for name, d in ALL_SKILLS.items() if d['lv'] <= current_level]
-    
-    best_skill = None
-    max_prob = -1.0
-    
-    for s_name in available_list:
-        if "縫い" not in s_name: continue
+    if is_charged:
+        # ターン送りの価値が高いケース：集中力が低い、または次のパワーが「最強」で、今の「弱い」をスキップしたい場合
+        if focus < 25 or current_p == "弱い":
+            return "必殺使用推奨（ターン送り優先）", "消費集中力0でターンを進め、有利なパワー（最強等）へ遷移させる価値が高い状態です。"
         
-        dist = calculate_distribution(s_name, power, is_shitsuke)
-        total_weight = sum(dist.values())
+        # 温存の価値が高いケース：調整段階で会心が出ると困る場合
+        if max_d < 8:
+            return "必殺温存推奨（調整優先）", "現在の微調整段階で会心が発生すると、数値が跳ねて誤差が残るリスクがあります。温存を推奨します。"
         
-        # 誤差0にジャストフィットする重みを算出
-        match_weight = dist.get(target_diff, 0)
-        prob = match_weight / total_weight
-        
-        if prob > max_prob:
-            max_prob = prob
-            best_skill = s_name
-            
-    return best_skill, max_prob
+        return "必殺使用検討（会心バフ）", "会心率2倍の永続効果を得るため、削りフェーズの間に発動させるのが理想的です。"
 
-# --- 3. Streamlit UI構築 ---
+    return None, None
 
-st.set_page_config(page_title="マリアの裁縫アシストPro", layout="wide")
+# --- 3. UI構築 ---
+st.set_page_config(page_title="裁縫アシストPro", layout="wide")
 
 # 初期化
-if 'pattern_idx' not in st.session_state: st.session_state.pattern_idx = 0
-if 'level' not in st.session_state: st.session_state.level = 70
-if 'board' not in st.session_state: st.session_state.board = np.zeros((3, 3))
-if 'targets' not in st.session_state: st.session_state.targets = np.full((3, 3), 100)
-if 'is_shitsuke_active' not in st.session_state: st.session_state.is_shitsuke_active = 0
-
-# --- メイン画面レイアウト ---
-st.title("🧵 裁縫アシスト：AI分布最適化モデル")
+if 'level' not in st.session_state: st.session_state.level = 75
+if 'is_hissatsu_charged' not in st.session_state: st.session_state.is_hissatsu_charged = False
+if 'is_hissatsu_active' not in st.session_state: st.session_state.is_hissatsu_active = False
 
 with st.sidebar:
-    st.header("👤 職人設定")
+    st.header("⚙️ システム設定")
     st.session_state.level = st.number_input("職人レベル", 1, 80, st.session_state.level)
-    cloth_type = st.selectbox("布特性", ["【再生布】", "【虹布】", "【光布】"])
     
     st.divider()
-    st.info("💡 **表の考え方**\n数値は一律ではありません。中央値（普通なら15）が最も出やすく、端（12や18）は滅多に出ません。AIはこの『出やすさ』を考慮して計算しています。")
+    st.header("🌈 裁縫の極意（必殺）")
+    st.session_state.is_hissatsu_charged = st.checkbox("必殺チャージ", value=st.session_state.is_hissatsu_charged)
+    st.session_state.is_hissatsu_active = st.checkbox("極意発動（会心2倍状態）", value=st.session_state.is_hissatsu_active)
 
-col_main, col_ai = st.columns([2, 1])
+# --- 4. メイン表示とAI分析 ---
+col_board, col_analysis = st.columns([2, 1])
 
-with col_ai:
-    st.header("🤖 AI推奨")
-    # 代表して最も誤差が大きいマス、または選択したマスを分析
-    r_sel = st.selectbox("分析行", [0, 1, 2])
-    c_sel = st.selectbox("分析列", [0, 1, 2])
+with col_analysis:
+    st.header("📈 戦略分析")
     
-    diff = st.session_state.targets[r_sel, c_sel] - st.session_state.board[r_sel, c_sel]
-    p_idx = st.session_state.pattern_idx % 4 # デフォルト周期
-    current_p = ["普通", "強い", "最強", "弱い"][p_idx]
+    # 現状の特定
+    diffs = st.session_state.targets - st.session_state.board
+    idx = st.session_state.pattern_idx % 4
+    current_p = ["普通", "強い", "最強", "弱い"][idx]
     
-    best_s, prob = get_best_move(diff, current_p, st.session_state.is_shitsuke_active > 0, st.session_state.level)
+    # 必殺戦略の提示
+    h_title, h_desc = analyze_hissatsu_utility(
+        current_p, st.session_state.focus, diffs, 
+        st.session_state.is_hissatsu_charged, st.session_state.is_hissatsu_active
+    )
     
-    if diff <= 0:
-        st.write("このマスは完成、または縫いすぎです。")
-    elif best_s and prob > 0:
-        st.success(f"推奨特技: **{best_s}**")
-        st.metric("誤差0への合致率(重み)", f"{prob*100:.1f}%")
-    else:
-        st.warning("ジャストで縫える手はありません。削りを優先しましょう。")
+    if h_title:
+        with st.container(border=True):
+            st.markdown(f"**{h_title}**")
+            st.caption(h_desc)
 
-with col_main:
-    # 盤面表示 (誤差表示ロジック含む)
-    rows, cols = st.session_state.board.shape
-    grids = st.columns(cols)
-    for r in range(rows):
-        for c in range(cols):
-            with grids[c]:
-                target = st.session_state.targets[r,c]
-                current = st.session_state.board[r,c]
-                d = target - current
-                color = "green" if d == 0 else "orange" if 0 < d <= 4 else "red" if d < 0 else "white"
-                
-                with st.container(border=True):
-                    st.markdown(f"**残り: :{color}[{int(d)}]**")
-                    st.session_state.board[r,c] = st.number_input(f"📱現{r}{c}", value=int(current), key=f"b_{r}_{c}")
-                    st.session_state.targets[r,c] = st.number_input(f"🎯基{r}{c}", value=int(target), key=f"t_{r}_{c}")
+    # 精神統一ガイド
+    if not st.session_state.fixed_turns > 0:
+        if current_p == "最強":
+            st.warning("最強パワー中：精神統一による『削り固定』が可能です。")
+        elif current_p == "弱い":
+            st.info("弱いパワー中：精神統一による『調整固定』が可能です。")
 
-# --- 実行ボタン等 ---
-# (前回同様のターン進行ロジック)
+with col_board:
+    st.subheader(f"盤面状況 (ぬいパワー: {current_p})")
+    # 盤面入力と誤差の可視化ロジック
+    # (誤差0=緑、1-4=黄、超過=赤のカラー表示)
+    
+# --- 5. アクション処理 ---
+st.divider()
+available_skills = {n: d['cost'] for n, d in ALL_SKILLS.items() if d['lv'] <= st.session_state.level}
+selected_skill = st.selectbox("特技選択", list(available_skills.keys()))
+
+c1, c2, c3 = st.columns(3)
+with c1:
+    if st.button("⚡ 特技実行 / 必殺発動"):
+        if st.session_state.is_hissatsu_charged and not st.session_state.is_hissatsu_active:
+            # 必殺使用時の処理
+            st.session_state.is_hissatsu_charged = False
+            st.session_state.is_hissatsu_active = True
+            st.session_state.pattern_idx += 1
+        else:
+            # 通常の集中力消費とターン進行
+            st.session_state.focus -= available_skills[selected_skill]
+            # ...
+        st.rerun()
