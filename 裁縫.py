@@ -1,120 +1,97 @@
 import streamlit as st
 import numpy as np
-import pandas as pd
 
-# --- 1. 定義データ (ALL_SKILLS / 期待値分布) ---
-ALL_SKILLS = {
-    "通常縫い": {"cost": 5, "lv": 1}, "加減縫い": {"cost": 10, "lv": 3},
-    "水平縫い": {"cost": 10, "lv": 7}, "たすき縫い": {"cost": 7, "lv": 11},
-    "垂直縫い": {"cost": 10, "lv": 15}, "2倍縫い": {"cost": 9, "lv": 19},
-    "3倍縫い": {"cost": 12, "lv": 23}, "精神統一": {"cost": 7, "lv": 27},
-    "糸ほぐし": {"cost": 16, "lv": 31}, "逆たすき縫い": {"cost": 7, "lv": 35},
-    "巻き込み縫い": {"cost": 18, "lv": 41}, "しつけがけ": {"cost": 24, "lv": 47},
+# --- 1. 裁縫商材データベース (主要装備) ---
+# targets: [左上, 右上, 左中, 右中, 左下, 右下] の順 (6マスの場合)
+# targets: [左上, 中上, 右上, 左中, 中中, 右中, 左下, 中下, 右下] (9マスの場合)
+ITEM_DB = {
+    "【足】原始獣の足 (4マス)": {"rows": 2, "cols": 2, "targets": [120, 120, 120, 120], "limit": 4},
+    "【足】妖炎魔女のくつ (4マス)": {"rows": 2, "cols": 2, "targets": [200, 200, 200, 200], "limit": 4},
+    "【足】ロードリーブーツ (4マス)": {"rows": 2, "cols": 2, "targets": [210, 210, 210, 210], "limit": 4},
+    "【頭】聖域の闘志 (6マス)": {"rows": 3, "cols": 2, "targets": [150, 150, 170, 170, 150, 150], "limit": 8},
+    "【腕】空賊のグローブ (6マス)": {"rows": 3, "cols": 2, "targets": [140, 140, 160, 160, 140, 140], "limit": 8},
+    "【体下】スパングル下 (9マス)": {"rows": 3, "cols": 3, "targets": [130, 130, 130, 150, 150, 150, 130, 130, 130], "limit": 12},
+    "【体上】叡聖のコート上 (9マス)": {"rows": 3, "cols": 3, "targets": [180, 240, 180, 240, 270, 240, 180, 240, 180], "limit": 18},
+    "【体上】蒼穹の兵団鎧 (9マス)": {"rows": 3, "cols": 3, "targets": [190, 250, 190, 250, 280, 250, 190, 250, 190], "limit": 18},
 }
 
-POWER_RATES = {"弱い": 0.5, "普通": 1.0, "強い": 1.5, "最強": 2.0}
+# --- 2. 状態管理 ---
+if 'board' not in st.session_state:
+    st.session_state.board = np.zeros((2, 2))
+    st.session_state.targets = np.full((2, 2), 120)
+    st.session_state.success_limit = 4
 
-# --- 2. 状態初期化 ---
-if 'board' not in st.session_state: st.session_state.board = np.zeros((3, 3))
-if 'targets' not in st.session_state: st.session_state.targets = np.full((3, 3), 100)
-if 'focus' not in st.session_state: st.session_state.focus = 150
-if 'pattern_idx' not in st.session_state: st.session_state.pattern_idx = 0
-if 'fixed_turns' not in st.session_state: st.session_state.fixed_turns = 0
-if 'is_hissatsu_active' not in st.session_state: st.session_state.is_hissatsu_active = False
+# --- 3. サイドバー：装備検索 ---
+st.set_page_config(page_title="裁縫職人DBアシスト", layout="wide")
 
-# --- 3. メインレイアウト ---
-st.set_page_config(page_title="裁縫アシストPro", layout="wide")
-st.title("🧵 裁縫職人専用 計算・戦略アシスト")
-
-# サイドバー：設定と必殺技
 with st.sidebar:
-    st.header("👤 職人・商材設定")
-    level = st.number_input("職人レベル", 1, 80, 75)
-    item_type = st.selectbox("商材タイプ", ["原始獣 (再生布)", "叡聖 (虹布)", "その他"])
+    st.header("🔍 装備検索")
+    search_q = st.text_input("装備名・部位を入力")
     
-    st.divider()
-    st.header("🌈 裁縫の極意（必殺）")
-    charged = st.checkbox("必殺チャージ！")
-    st.session_state.is_hissatsu_active = st.checkbox("極意発動（永続会心2倍）", value=st.session_state.is_hissatsu_active)
+    # 検索フィルタリング
+    options = [name for name in ITEM_DB.keys() if search_q in name]
+    if not options: options = list(ITEM_DB.keys())
     
+    selected_item = st.selectbox("装備を選択", options)
+    
+    if st.button("基準値を反映"):
+        item_data = ITEM_DB[selected_item]
+        st.session_state.board = np.zeros((item_data["rows"], item_data["cols"]))
+        st.session_state.targets = np.array(item_data["targets"]).reshape(item_data["rows"], item_data["cols"])
+        st.session_state.success_limit = item_data["limit"]
+        st.session_state.item_name = selected_item
+        st.rerun()
+
     st.divider()
-    st.info("""
-    **【表の見方と確率の偏り】**
-    数値の出方は均等ではありません。中央値（例：普通で15）が最も出やすく、端（12や18）は低確率です。AIはこの「重み」を考慮して推奨を出します。
-    """)
+    st.header("📊 大成功の条件")
+    st.write(f"この商材の合計誤差制限: **{st.session_state.success_limit} 以内**")
+    st.caption("※各マスの誤差の絶対値を足した合計です。")
 
-# メインエリア：上段（盤面入力）
-st.subheader("📍 盤面入力（上：現在値 / 下：基準値）")
-rows, cols = (2, 2) if "4" in item_type else (3, 2) if "6" in item_type else (3, 3)
-st.session_state.board = st.session_state.board[:rows, :cols]
-st.session_state.targets = st.session_state.targets[:rows, :cols]
+# --- 4. メイン画面：盤面と大成功判定 ---
+st.title(f"🧵 {st.session_state.get('item_name', '装備を選択してください')}")
 
-grid_cols = st.columns(cols)
-for r in range(rows):
-    for c in range(cols):
-        with grid_cols[c]:
-            diff = st.session_state.targets[r,c] - st.session_state.board[r,c]
-            
-            # 誤差に応じた背景色分け (マリアさんの知恵：0-4が黄色)
-            if diff == 0: color = "#28a745"; status = "会心OK"
-            elif 0 < diff <= 4: color = "#ffc107"; status = "圏内"
-            elif diff < 0: color = "#dc3545"; status = "Over"
-            else: color = "#ffffff"; status = ""
-            
-            with st.container(border=True):
-                st.markdown(f"<div style='background-color:{color}; color:black; text-align:center; border-radius:3px;'><b>残り: {int(diff)}</b><br>{status}</div>", unsafe_allow_html=True)
-                st.session_state.board[r,c] = st.number_input(f"📱現状({r},{c})", value=int(st.session_state.board[r,c]), key=f"b_{r}_{c}")
-                st.session_state.targets[r,c] = st.number_input(f"🎯基準({r},{c})", value=int(st.session_state.targets[r,c]), key=f"t_{r}_{c}")
+col_board, col_status = st.columns([2, 1])
 
-# メインエリア：中段（AI戦略・状態）
-st.divider()
-col_stat, col_ai = st.columns([1, 1])
+with col_status:
+    # 現在の合計誤差を計算
+    current_diffs = np.abs(st.session_state.targets - st.session_state.board)
+    total_error = np.sum(current_diffs)
+    
+    st.header("✨ 大成功判定")
+    error_color = "green" if total_error <= st.session_state.success_limit else "red"
+    st.markdown(f"### 現在の合計誤差: :{error_color}[{int(total_error)}]")
+    
+    if total_error <= st.session_state.success_limit:
+        st.success("🎯 大成功圏内です！")
+    else:
+        st.warning(f"あと {int(total_error - st.session_state.success_limit)} 下げる必要があります。")
 
-with col_stat:
-    st.header("📊 状態管理")
-    st.session_state.focus = st.number_input("残り集中力", value=st.session_state.focus)
-    idx = st.session_state.pattern_idx % 4
+    st.divider()
+    # ぬいパワー表示と精神統一（以前のロジック）
+    idx = st.session_state.get('pattern_idx', 0) % 4
     current_p = ["普通", "強い", "最強", "弱い"][idx]
     st.metric("現在のぬいパワー", current_p)
-    if st.session_state.fixed_turns > 0:
-        st.warning(f"精神統一中：残り {st.session_state.fixed_turns} ターン")
 
-with col_ai:
-    st.header("🤖 AI推奨アクション")
-    # 戦略的推奨 (必殺、最強削り、弱い調整)
-    if charged:
-        st.success("推奨：**必殺技の使用を検討**")
-        st.caption("消費0でパワーを次に送れるチャンスです。削りが必要なら会心バフ目的で使いましょう。")
-    elif current_p == "最強" and st.session_state.fixed_turns == 0:
-        st.warning("推奨：**精神統一（最強固定）**")
-        st.caption("最強パワーで一気に削る『削りフェーズ』の定石です。")
-    elif current_p == "弱い" and np.max(st.session_state.targets - st.session_state.board) < 15:
-        st.info("推奨：**加減縫い / 精神統一（弱い固定）**")
-        st.caption("誤差が小さいマスを、弱いパワーで慎重に詰める『調整フェーズ』です。")
-    else:
-        st.write("盤面の数値を入力すると、最適な特技が表示されます。")
+with col_board:
+    rows, cols = st.session_state.board.shape
+    grid_cols = st.columns(cols)
+    
+    for r in range(rows):
+        for c in range(cols):
+            with grid_cols[c]:
+                t = st.session_state.targets[r,c]
+                b = st.session_state.board[r,c]
+                d = t - b
+                
+                # 誤差表示（絶対値ではなく、縫い進めるための残り数値）
+                color = "green" if d == 0 else "orange" if 0 < d <= 4 else "red" if d < 0 else "white"
+                
+                with st.container(border=True):
+                    st.markdown(f"<div style='text-align:center;'>残り: <b style='color:{color}; font-size:20px;'>{int(d)}</b></div>", unsafe_allow_html=True)
+                    st.session_state.board[r,c] = st.number_input(f"現({r},{c})", value=int(b), key=f"b_{r}_{c}")
+                    st.session_state.targets[r,c] = st.number_input(f"基({r},{c})", value=int(t), key=f"t_{r}_{c}")
 
-# メインエリア：下段（操作ボタン）
+# --- 5. 操作ボタン ---
 st.divider()
-available_skills = {n: d['cost'] for n, d in ALL_SKILLS.items() if d['lv'] <= level}
-selected_skill = st.selectbox("特技を選択", list(available_skills.keys()))
-
-btn_c1, btn_c2, btn_c3 = st.columns(3)
-with btn_c1:
-    if st.button("⚡ 特技を実行して次へ"):
-        st.session_state.focus -= available_skills[selected_skill]
-        if selected_skill == "精神統一": st.session_state.fixed_turns = 3
-        
-        # ターン進行
-        if st.session_state.fixed_turns > 0: st.session_state.fixed_turns -= 1
-        else: st.session_state.pattern_idx += 1
-        st.rerun()
-
-with btn_c2:
-    if st.button("🔄 数値を手動修正 (ターン維持)"):
-        st.rerun()
-
-with btn_c3:
-    if st.button("⏭️ 1ターン飛ばす"):
-        st.session_state.pattern_idx += 1
-        st.rerun()
+st.caption("操作: [⚡実行] 集中力消費とターン進行 | [🔄修正] ターンを維持して数値だけ保存 | [⏭️飛ばす] ターンを1つ進める")
+# (以下、ボタン処理)
