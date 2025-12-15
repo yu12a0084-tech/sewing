@@ -26,11 +26,15 @@ SKILL_COSTS = {
     "3倍縫い": 12, "水平縫い": 10, "垂直縫い": 10, "たすき縫い": 7, "精神統一": 7,
 }
 
-# --- 3. サイドバー ---
+# --- 3. メインレイアウト ---
+st.set_page_config(page_title="DQX裁縫アシスト", layout="wide")
+st.title(f"裁縫アシスト :blue[{st.session_state.get('cloth_type', '【選択してください】')}]")
+
+# サイドバーで特性選択
 with st.sidebar:
-    st.header("🧵 布特性設定")
-    cloth_type = st.selectbox("布の種類を選択", list(ITEM_PRESETS.keys()))
-    if st.button("設定を読み込む"):
+    st.header("🧵 基本設定")
+    cloth_type = st.selectbox("布の種類", list(ITEM_PRESETS.keys()), key="cloth_type")
+    if st.button("設定を反映してリセット"):
         preset = ITEM_PRESETS[cloth_type]
         st.session_state.targets = np.array(preset["targets"])
         st.session_state.board = np.zeros((3, 3), dtype=int)
@@ -39,63 +43,67 @@ with st.sidebar:
         st.session_state.fixed_turns = 0
         st.rerun()
 
-# --- 4. メイン画面 ---
-st.title(f"裁縫アシスト :blue[{cloth_type}]")
+# 再生布の重要注記（強調表示）
+if st.session_state.get('cloth_type') == "【再生布】":
+    st.warning("**⚠️ 再生布の重要ルール**：4ターンごとに最も縫い進んだ箇所が12〜16戻ります。再生を確認したら、手動で「現在値」を書き換え、下の「🔄 数値修正」を押してください。")
 
-# --- 🚨 再生布専用の重要注記エリア ---
-if cloth_type == "【再生布】":
-    st.warning("""
-    **【再生布の操作について】** 再生布の場合、4ターンごとに「最も縫い進んだ箇所」が自動で12〜16戻ります。  
-    このツールでは自動で数値を戻すことはしません（どれが再生したかゲーム画面で確認が必要なため）。  
-    **再生が発生したら、該当するマスの数値を手動で書き換えてから「🔄 数値修正」を押してください。**
-    """)
-    
-    # ターン経過による強調
-    turn_num = st.session_state.pattern_idx + 1
-    if turn_num % 4 == 0:
-        st.error(f"📢 現在 第 {turn_num} ターン：**再生タイミングです！** 数値を確認してください。")
+# --- 4. 盤面表示（ここを改良） ---
+st.subheader("📍 盤面状況")
 
-# --- メインレイアウト ---
-col1, col2 = st.columns([2, 1])
+grid_cols = st.columns(3)
+for r in range(3):
+    for c in range(3):
+        with grid_cols[c]:
+            target = st.session_state.targets[r,c]
+            current = st.session_state.board[r,c]
+            diff = target - current
+            
+            # 色分けロジック
+            if diff == 0: color = "green"; status = "🎉 完成"
+            elif diff < 0: color = "red"; status = "⚠️ 縫いすぎ"
+            elif diff <= 6: color = "orange"; status = "✨ 圏内"
+            else: color = "gray"; status = "進行中"
 
-with col2:
-    st.header("📊 ステータス")
-    st.session_state.focus = st.number_input("集中力", value=st.session_state.focus)
+            # カード風の囲い
+            with st.container(border=True):
+                st.markdown(f"### マス({r},{c})")
+                st.markdown(f"**残り: :{color}[{diff}]** ({status})")
+                
+                # 入力エリア
+                st.session_state.board[r,c] = st.number_input(
+                    "📱 現在値 (ゲーム画面の値)", 
+                    value=int(current), 
+                    key=f"b_{r}_{c}"
+                )
+                
+                st.divider() # 線を引いて区切る
+                
+                st.session_state.targets[r,c] = st.number_input(
+                    "🎯 基準値 (ゴールの数値)", 
+                    value=int(target), 
+                    key=f"t_{r}_{c}"
+                )
+
+# --- 5. ステータスと操作 ---
+st.divider()
+col_left, col_right = st.columns([1, 1])
+
+with col_left:
+    st.header("📊 状態")
+    st.session_state.focus = st.number_input("残り集中力", value=st.session_state.focus)
     idx = st.session_state.pattern_idx % len(st.session_state.pattern)
     st.metric("現在のぬいパワー", st.session_state.pattern[idx])
-    
-    if cloth_type == "【虹布】":
-        st.session_state.special_effect = st.radio("集中力変化", ["なし", "消費集中力半分", "消費集中力1.5倍"])
     
     if st.session_state.fixed_turns > 0:
         st.info(f"精神統一中 (残り {st.session_state.fixed_turns} 回)")
 
-with col1:
-    st.header("📍 盤面入力")
-    grid_cols = st.columns(3)
-    for r in range(3):
-        for c in range(3):
-            with grid_cols[c]:
-                diff = st.session_state.targets[r,c] - st.session_state.board[r,c]
-                st.markdown(f"**({r},{c})** 差: **{diff}**")
-                st.session_state.board[r,c] = st.number_input(f"現{r}{c}", value=int(st.session_state.board[r,c]), key=f"b_{r}_{c}", label_visibility="collapsed")
-                st.session_state.targets[r,c] = st.number_input(f"目{r}{c}", value=int(st.session_state.targets[r,c]), key=f"t_{r}_{c}", label_visibility="collapsed")
-
-# --- 5. 実行ボタン ---
-st.divider()
-selected_skill = st.selectbox("実行特技", list(SKILL_COSTS.keys()))
-
-c1, c2 = st.columns(2)
-with c1:
-    if st.button("⚡ 実行 (ターン進行)"):
-        # 集中力計算
-        cost = SKILL_COSTS[selected_skill]
-        if cloth_type == "【虹布】" and st.session_state.get('special_effect') == "消費集中力半分":
-            cost //= 2
-        elif cloth_type == "【虹布】" and st.session_state.get('special_effect') == "消費集中力1.5倍":
-            cost = int(cost * 1.5)
-        
-        st.session_state.focus -= cost
+with col_right:
+    st.header("⚡ アクション")
+    selected_skill = st.selectbox("特技を選択", list(SKILL_COSTS.keys()))
+    
+    c1, c2 = st.columns(2)
+    if c1.button("特技を実行して次へ"):
+        st.session_state.focus -= SKILL_COSTS[selected_skill]
         if selected_skill == "精神統一": st.session_state.fixed_turns = 3
         
         if st.session_state.fixed_turns > 0:
@@ -104,6 +112,5 @@ with c1:
             st.session_state.pattern_idx += 1
         st.rerun()
 
-with c2:
-    if st.button("🔄 数値修正 (ターン維持)"):
-        st.success("数値を反映しました。再生後の数値を元に再計算します。")
+    if c2.button("🔄 数値修正 (再生反映)"):
+        st.success("数値を更新しました")
