@@ -23,32 +23,22 @@ if 'board' not in st.session_state: st.session_state.board = np.zeros(9)
 if 'fix_power' not in st.session_state: st.session_state.fix_power = None
 if 'fix_turns' not in st.session_state: st.session_state.fix_turns = 0
 
-# --- 3. 補助関数 ---
-def calc_crit(turn, base_crit, item_type, hissatsu):
-    rate = base_crit * 8.0
-    if item_type == "虹" and turn % 8 == 0: rate *= 7.0
-    if hissatsu: rate *= 2.0
-    return min(rate, 100.0)
-
-def get_ai_action(diffs, turn, power, item_type, crit, random_target):
+# --- 3. 思考エンジン ---
+def get_ai_action(diffs, power, item_type, turn, random_target):
     idx = np.argmax(diffs)
     val = diffs[idx]
     target_name = f"マス{idx+1}"
     active_diffs = diffs[diffs > 0]
     total_remaining = np.sum(active_diffs)
 
-    # 精神統一推奨
+    # 精神統一推奨ロジック（未固定時のみ）
     if st.session_state.fix_turns == 0:
         if power == "最強" and total_remaining > 200:
-            return f"⚔️ **「精神統一」で【最強】を固定**：削り一気上げ。3倍ぬいの準備を！"
+            return f"⚔️ **「精神統一」で【最強】を固定**：最強維持(実質あと2T)で3倍ぬいを叩き込む！"
         if power == "弱い" and len(active_diffs) >= 2 and np.all(active_diffs <= 18):
-            return f"🧘 **「精神統一」で【弱い】を固定**：微調整フェーズ突入。確実に誤差0へ。"
+            return f"🧘 **「精神統一」で【弱い】を固定**：微調整フェーズ。確実に誤差0へ。"
 
-    # ランダム環境対応
-    if random_target is not None:
-        if item_type == "再生" and turn % 4 == 0 and 12 <= diffs[random_target] <= 16:
-            return f"♻️ **【マス{random_target+1}】は戻り待ち**：他を優先してください。"
-
+    # パワー別推奨
     if power == "最強":
         if val >= 108: return f"⚔️ **【{target_name}】に「3倍ぬい」**"
     elif power == "弱い":
@@ -57,8 +47,8 @@ def get_ai_action(diffs, turn, power, item_type, crit, random_target):
     return f"🧵 **【{target_name}】に「通常ぬい」**"
 
 # --- 4. メインUI ---
-st.set_page_config(page_title="裁縫AI：究極完全版", layout="wide")
-st.title("🧵 裁縫職人AI：究極完全版")
+st.set_page_config(page_title="裁縫AI：真・究極完全版", layout="wide")
+st.title("🧵 裁縫職人AI：真・究極完全版")
 
 with st.sidebar:
     st.header("⚙️ 設定")
@@ -72,34 +62,31 @@ with st.sidebar:
         st.rerun()
 
     needle_crit = st.slider("針会心(%)", 0.0, 7.0, 4.3, 0.1)
-    hissatsu = st.checkbox("必殺チャージ")
 
 # --- 状態計算 ---
 cycle = data["cycle"]
 if st.session_state.fix_turns > 0:
     current_power = st.session_state.fix_power
-    st.info(f"🧘 **精神統一中:** {current_power} (残り {st.session_state.fix_turns}回)")
+    st.warning(f"🧘 **精神統一維持中:** {current_power} (維持：あと {st.session_state.fix_turns} 回の行動可能)")
 else:
     raw_p = cycle[st.session_state.cycle_idx % len(cycle)]
     if raw_p == "ランダム":
         current_power = st.radio("🎲 ランダム環境を選択", POWERS, index=1, horizontal=True)
     else:
         current_power = raw_p
-        st.write(f"現在のパワー: **{current_power}**")
+        st.info(f"現在のパワー: **{current_power}**")
 
 # 環境ターゲット入力
 random_target = None
 if st.session_state.turn % 4 == 0:
-    st.warning(f"⚠️ {data['type']}特性発生ターン")
+    st.warning(f"⚠️ {data['type']}特性発生(4nターン)")
     t_opts = [f"マス{i+1}" for i, t in enumerate(data["targets"]) if t > 0]
     sel_t = st.selectbox("対象マスを選択", ["未選択"] + t_opts)
     if sel_t != "未選択": random_target = int(sel_t.replace("マス", "")) - 1
 
 # --- 実行 ---
 diffs = np.array(data["targets"]) - st.session_state.board[:len(data["targets"])]
-c_crit = calc_crit(st.session_state.turn, needle_crit, data["type"], hissatsu)
-
-st.success(f"🤖 **AI推奨:** {get_ai_action(diffs, st.session_state.turn, current_power, data['type'], c_crit, random_target)}")
+st.success(f"🤖 **AI推奨:** {get_ai_action(diffs, current_power, data['type'], st.session_state.turn, random_target)}")
 
 col_g, col_c = st.columns([3, 2])
 with col_g:
@@ -120,14 +107,14 @@ with col_c:
         if data["type"] == "虹" and st.session_state.turn % 4 == 0: cost //= 2
         st.session_state.focus -= cost
         
-        # 精神統一の処理
+        # --- 精神統一ロジック（実質2ターン対応） ---
         if used_skill == "精神統一":
             st.session_state.fix_power = current_power
-            st.session_state.fix_turns = 3
+            st.session_state.fix_turns = 2  # 使用ターンで1消費するため、残りは2ターン
         elif st.session_state.fix_turns > 0:
             st.session_state.fix_turns -= 1
         
-        # ターンと周期の進展
+        # パワー周期を進めるかどうかの判断
         if st.session_state.fix_turns == 0:
             st.session_state.cycle_idx += 1
         
