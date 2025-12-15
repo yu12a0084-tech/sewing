@@ -1,7 +1,21 @@
 import streamlit as st
 import numpy as np
 
-# --- 1. スキル・環境データの定義 ---
+# --- 1. 最初にならず全ての変数を初期化する ---
+if 'pattern' not in st.session_state:
+    st.session_state.pattern = ["最強", "普通", "弱い", "普通", "強い", "普通"]
+if 'pattern_idx' not in st.session_state:
+    st.session_state.pattern_idx = 0
+if 'board' not in st.session_state:
+    st.session_state.board = np.zeros((3, 3), dtype=int)
+if 'targets' not in st.session_state:
+    st.session_state.targets = np.full((3, 3), 100)
+if 'focus' not in st.session_state:
+    st.session_state.focus = 150
+if 'fixed_turns' not in st.session_state:
+    st.session_state.fixed_turns = 0
+
+# --- 2. データ定義（スキルなど） ---
 SKILL_DB = {
     "通常縫い": {"cost": 5, "ratio": 1.0, "type": "pos"},
     "加減縫い": {"cost": 10, "ratio": 0.5, "type": "pos"},
@@ -12,21 +26,14 @@ SKILL_DB = {
     "垂直縫い": {"cost": 10, "ratio": 1.0, "type": "line_v"},
     "精神統一": {"cost": 7, "ratio": 0.0, "type": "buff"},
 }
-
 ENV_LIST = ["普通", "弱い", "強い", "最強"]
-ENV_MULT = {"普通": 1.0, "弱い": 0.5, "強い": 1.5, "最強": 2.0}
 
-# --- 2. セッション状態の初期化 ---
-if 'initialized' not in st.session_state:
-    st.session_state.board = np.zeros((3, 3), dtype=int)
-    st.session_state.targets = np.full((3, 3), 100)
-    st.session_state.focus = 150
-    # デフォルトの推移パターン
-    st.session_state.pattern = ["最強", "普通", "弱い", "普通", "強い", "普通"]
-    st.session_state.pattern_idx = 0
-    st.session_state.fixed_turns = 0
-    st.session_state.initialized = True
-
+# --- 3. ここからサイドバーやメイン画面を書く ---
+with st.sidebar:
+    st.header("⚙ 環境設定")
+    # ここに pattern_idx を使うコードを書いても、もうエラーになりません
+    current_p_idx = st.session_state.pattern_idx % len(st.session_state.pattern)
+    # ...残りのサイドバーコード...
 # --- 3. サイドバー：環境設定機能 ---
 with st.sidebar:
     st.header("⚙ 環境パターンの設定")
@@ -124,3 +131,4 @@ with exec_col2:
 if st.button("⚠ 全リセット"):
     st.session_state.clear()
     st.rerun()
+
